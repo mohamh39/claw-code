@@ -9,7 +9,7 @@ use crate::types::{
     InputContentBlock, InputMessage, MessageRequest, MessageResponse, OutputContentBlock, Usage,
     StreamEvent, MessageStartEvent, MessageDeltaEvent, MessageStopEvent,
     ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent,
-    ContentBlockDelta, MessageDelta,
+    ContentBlockDelta, MessageDelta, ToolDefinition, ToolChoice,
 };
 use super::{dotenv_value, Provider, ProviderFuture};
 use std::collections::VecDeque;
@@ -44,6 +44,10 @@ struct OdinReqBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     client_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<ToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<ToolChoice>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -259,6 +263,8 @@ impl OdinProvider {
             temperature: req.temperature.map(|t| t as f32),
             max_tokens: Some(req.max_tokens),
             client_id: self.azure_client_id.clone(),
+            tools: req.tools.clone(),
+            tool_choice: req.tool_choice.clone(),
         };
         let http_resp = self.http_client.post(&api_url)
             .bearer_auth(&bearer)
