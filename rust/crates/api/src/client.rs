@@ -1,14 +1,16 @@
 use crate::error::ApiError;
 use crate::prompt_cache::{PromptCache, PromptCacheRecord, PromptCacheStats};
 use crate::providers::anthropic::{self, AnthropicClient, AuthSource};
+use crate::providers::odin::OdinProvider;
 use crate::providers::openai_compat::{self, OpenAiCompatClient, OpenAiCompatConfig};
-use crate::providers::{self, ProviderKind};
+use crate::providers::{self, Provider, ProviderKind};
 use crate::types::{MessageRequest, MessageResponse, StreamEvent};
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ProviderClient {
     Anthropic(AnthropicClient),
+    Odin(OdinProvider),
     Xai(OpenAiCompatClient),
     OpenAi(OpenAiCompatClient),
 }
@@ -28,6 +30,7 @@ impl ProviderClient {
                 Some(auth) => AnthropicClient::from_auth(auth),
                 None => AnthropicClient::from_env()?,
             })),
+            ProviderKind::Odin => Ok(Self::Odin(OdinProvider::try_from_env()?)),
             ProviderKind::Xai => Ok(Self::Xai(OpenAiCompatClient::from_env(
                 OpenAiCompatConfig::xai(),
             )?)),
@@ -59,6 +62,7 @@ impl ProviderClient {
     pub const fn provider_kind(&self) -> ProviderKind {
         match self {
             Self::Anthropic(_) => ProviderKind::Anthropic,
+            Self::Odin(_) => ProviderKind::Odin,
             Self::Xai(_) => ProviderKind::Xai,
             Self::OpenAi(_) => ProviderKind::OpenAi,
         }
@@ -76,7 +80,7 @@ impl ProviderClient {
     pub fn prompt_cache_stats(&self) -> Option<PromptCacheStats> {
         match self {
             Self::Anthropic(client) => client.prompt_cache_stats(),
-            Self::Xai(_) | Self::OpenAi(_) => None,
+            Self::Odin(_) | Self::Xai(_) | Self::OpenAi(_) => None,
         }
     }
 
@@ -84,7 +88,7 @@ impl ProviderClient {
     pub fn take_last_prompt_cache_record(&self) -> Option<PromptCacheRecord> {
         match self {
             Self::Anthropic(client) => client.take_last_prompt_cache_record(),
-            Self::Xai(_) | Self::OpenAi(_) => None,
+            Self::Odin(_) | Self::Xai(_) | Self::OpenAi(_) => None,
         }
     }
 
@@ -94,6 +98,7 @@ impl ProviderClient {
     ) -> Result<MessageResponse, ApiError> {
         match self {
             Self::Anthropic(client) => client.send_message(request).await,
+            Self::Odin(client) => client.send_message(request).await,
             Self::Xai(client) | Self::OpenAi(client) => client.send_message(request).await,
         }
     }
@@ -107,6 +112,10 @@ impl ProviderClient {
                 .stream_message(request)
                 .await
                 .map(MessageStream::Anthropic),
+            Self::Odin(client) => client
+                .stream_message(request)
+                .await
+                .map(MessageStream::Odin),
             Self::Xai(client) | Self::OpenAi(client) => client
                 .stream_message(request)
                 .await
@@ -118,6 +127,7 @@ impl ProviderClient {
 #[derive(Debug)]
 pub enum MessageStream {
     Anthropic(anthropic::MessageStream),
+    Odin(crate::providers::odin::OdinMessageStream),
     OpenAiCompat(openai_compat::MessageStream),
 }
 
@@ -126,6 +136,7 @@ impl MessageStream {
     pub fn request_id(&self) -> Option<&str> {
         match self {
             Self::Anthropic(stream) => stream.request_id(),
+            Self::Odin(_) => None,
             Self::OpenAiCompat(stream) => stream.request_id(),
         }
     }
@@ -133,6 +144,7 @@ impl MessageStream {
     pub async fn next_event(&mut self) -> Result<Option<StreamEvent>, ApiError> {
         match self {
             Self::Anthropic(stream) => stream.next_event().await,
+            Self::Odin(_) => Ok(None), // Streaming not yet implemented for odin
             Self::OpenAiCompat(stream) => stream.next_event().await,
         }
     }

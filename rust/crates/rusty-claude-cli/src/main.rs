@@ -2979,7 +2979,7 @@ fn validate_model_syntax(model: &str) -> Result<(), String> {
 }
 
 fn is_bare_provider_model(model: &str) -> bool {
-    model.starts_with("claude-") || model.starts_with("gpt-")
+    model.starts_with("claude-") || model.starts_with("gpt-") || model.starts_with("odin-") || model == "odin"
 }
 
 fn is_local_openai_model_syntax(model: &str) -> bool {
@@ -3162,6 +3162,7 @@ fn provider_label(kind: ProviderKind) -> &'static str {
         ProviderKind::Anthropic => "anthropic",
         ProviderKind::Xai => "xai",
         ProviderKind::OpenAi => "openai",
+        ProviderKind::Odin => "odin",
     }
 }
 
@@ -12593,6 +12594,10 @@ impl AnthropicRuntimeClient {
                 // OpenRouter, xAI, DashScope, Ollama, and any other
                 // OpenAI-compat endpoint users configure via
                 // `OPENAI_BASE_URL` / `XAI_BASE_URL` / `DASHSCOPE_BASE_URL`.
+                ApiProviderClient::from_model_with_anthropic_auth(&resolved_model, None)?
+            }
+            ProviderKind::Odin => {
+                // odin provider uses Azure AD auth and custom API endpoint
                 ApiProviderClient::from_model_with_anthropic_auth(&resolved_model, None)?
             }
         };

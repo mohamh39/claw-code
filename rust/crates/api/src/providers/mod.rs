@@ -9,6 +9,7 @@ use crate::error::ApiError;
 use crate::types::{MessageRequest, MessageResponse};
 
 pub mod anthropic;
+pub mod odin;
 pub mod openai_compat;
 
 #[allow(dead_code)]
@@ -32,6 +33,7 @@ pub trait Provider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ProviderKind {
     Anthropic,
+    Odin,
     Xai,
     OpenAi,
 }
@@ -200,6 +202,43 @@ const MODEL_REGISTRY: &[(&str, ProviderMetadata)] = &[
             default_base_url: openai_compat::DEFAULT_DASHSCOPE_BASE_URL,
         },
     ),
+    // odin provider (Medtronic CLP-odin via Azure AD)
+    (
+        "odin",
+        ProviderMetadata {
+            provider: ProviderKind::Odin,
+            auth_env: "ODIN_CLIENT_ID",
+            base_url_env: "ODIN_BASE_URL",
+            default_base_url: odin::DEFAULT_ODIN_URL,
+        },
+    ),
+    (
+        "odin-sonnet",
+        ProviderMetadata {
+            provider: ProviderKind::Odin,
+            auth_env: "ODIN_CLIENT_ID",
+            base_url_env: "ODIN_BASE_URL",
+            default_base_url: odin::DEFAULT_ODIN_URL,
+        },
+    ),
+    (
+        "odin-opus",
+        ProviderMetadata {
+            provider: ProviderKind::Odin,
+            auth_env: "ODIN_CLIENT_ID",
+            base_url_env: "ODIN_BASE_URL",
+            default_base_url: odin::DEFAULT_ODIN_URL,
+        },
+    ),
+    (
+        "odin-haiku",
+        ProviderMetadata {
+            provider: ProviderKind::Odin,
+            auth_env: "ODIN_CLIENT_ID",
+            base_url_env: "ODIN_BASE_URL",
+            default_base_url: odin::DEFAULT_ODIN_URL,
+        },
+    ),
 ];
 
 #[must_use]
@@ -214,6 +253,12 @@ pub fn resolve_model_alias(model: &str) -> String {
                     "opus" => "claude-opus-4-7",
                     "sonnet" => "claude-sonnet-4-6",
                     "haiku" => "claude-haiku-4-5-20251213",
+                    _ => trimmed,
+                },
+                ProviderKind::Odin => match *alias {
+                    "odin" | "odin-sonnet" => "odin/sonnet",
+                    "odin-opus" => "odin/opus",
+                    "odin-haiku" => "odin/haiku",
                     _ => trimmed,
                 },
                 ProviderKind::Xai => match *alias {
@@ -293,6 +338,15 @@ pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
             default_base_url: openai_compat::DEFAULT_DASHSCOPE_BASE_URL,
         });
     }
+    // odin provider (Medtronic CLP-odin) - models prefixed with odin/
+    if canonical.starts_with("odin/") || canonical.starts_with("odin-") {
+        return Some(ProviderMetadata {
+            provider: ProviderKind::Odin,
+            auth_env: "ODIN_CLIENT_ID",
+            base_url_env: "ODIN_BASE_URL",
+            default_base_url: odin::DEFAULT_ODIN_URL,
+        });
+    }
     None
 }
 
@@ -316,6 +370,12 @@ pub fn provider_diagnostics_for_model(model: &str) -> ProviderDiagnostics {
                     auth_env: "ANTHROPIC_API_KEY",
                     base_url_env: "ANTHROPIC_BASE_URL",
                     default_base_url: anthropic::DEFAULT_BASE_URL,
+                },
+                ProviderKind::Odin => ProviderMetadata {
+                    provider: ProviderKind::Odin,
+                    auth_env: "ODIN_CLIENT_ID",
+                    base_url_env: "ODIN_BASE_URL",
+                    default_base_url: odin::DEFAULT_ODIN_URL,
                 },
                 ProviderKind::Xai => ProviderMetadata {
                     provider: ProviderKind::Xai,
@@ -397,7 +457,7 @@ pub fn detect_provider_kind(model: &str) -> ProviderKind {
 #[must_use]
 pub const fn model_family_identity_for_kind(kind: ProviderKind) -> runtime::ModelFamilyIdentity {
     match kind {
-        ProviderKind::Anthropic => runtime::ModelFamilyIdentity::Claude,
+        ProviderKind::Anthropic | ProviderKind::Odin => runtime::ModelFamilyIdentity::Claude,
         ProviderKind::Xai | ProviderKind::OpenAi => runtime::ModelFamilyIdentity::Generic,
     }
 }
@@ -424,6 +484,15 @@ pub fn provider_capabilities_for_model(model: &str) -> ProviderCapabilityReport 
         fixed_sampling_reasoning_models,
     ) = match metadata.provider {
         ProviderKind::Anthropic => (
+            ProviderWireProtocol::AnthropicMessages,
+            ProviderFeatureSupport::Unsupported,
+            ProviderFeatureSupport::Supported,
+            ProviderFeatureSupport::Unsupported,
+            ProviderFeatureSupport::Unsupported,
+            ProviderFeatureSupport::Unsupported,
+            ProviderFeatureSupport::Unsupported,
+        ),
+        ProviderKind::Odin => (
             ProviderWireProtocol::AnthropicMessages,
             ProviderFeatureSupport::Unsupported,
             ProviderFeatureSupport::Supported,
@@ -549,6 +618,12 @@ fn metadata_for_provider_kind(provider: ProviderKind) -> ProviderMetadata {
             base_url_env: "ANTHROPIC_BASE_URL",
             default_base_url: anthropic::DEFAULT_BASE_URL,
         },
+        ProviderKind::Odin => ProviderMetadata {
+            provider,
+            auth_env: "ODIN_CLIENT_ID",
+            base_url_env: "ODIN_BASE_URL",
+            default_base_url: odin::DEFAULT_ODIN_URL,
+        },
         ProviderKind::Xai => ProviderMetadata {
             provider,
             auth_env: "XAI_API_KEY",
@@ -568,6 +643,7 @@ fn metadata_for_provider_kind(provider: ProviderKind) -> ProviderMetadata {
 const fn provider_label(provider: ProviderKind) -> &'static str {
     match provider {
         ProviderKind::Anthropic => "Anthropic",
+        ProviderKind::Odin => "odin (Medtronic)",
         ProviderKind::Xai => "xAI",
         ProviderKind::OpenAi => "OpenAI-compatible",
     }
