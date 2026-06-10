@@ -5,8 +5,14 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use crate::error::ApiError;
 use crate::http_client::build_http_client_or_default;
-use crate::types::{InputContentBlock, InputMessage, MessageRequest, MessageResponse, OutputContentBlock, Usage};
+use crate::types::{
+    InputContentBlock, InputMessage, MessageRequest, MessageResponse, OutputContentBlock, Usage,
+    StreamEvent, MessageStartEvent, MessageDeltaEvent, MessageStopEvent,
+    ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent,
+    ContentBlockDelta, MessageDelta,
+};
 use super::{dotenv_value, Provider, ProviderFuture};
+use std::collections::VecDeque;
 
 // Default endpoint - configurable via ODIN_BASE_URL in .env
 pub const DEFAULT_ODIN_URL: &str = "https://vpce-0a74b154c6fd02d2d-k72zrw5i.execute-api.us-east-1.vpce.amazonaws.com/stageus";
@@ -307,12 +313,94 @@ impl Provider for OdinProvider {
         Box::pin(self.invoke(request))
     }
 
-    fn stream_message<'a>(&'a self, _request: &'a MessageRequest) -> ProviderFuture<'a, Self::Stream> {
-        Box::pin(async { Ok(OdinMessageStream { _phantom: std::marker::PhantomData }) })
+    fn stream_message<'a>(&'a self, request: &'a MessageRequest) -> ProviderFuture<'a, Self::Stream> {
+        Box::pin(async move {
+            // Call the API and get full response
+            let response = self.invoke(request).await?;
+            Ok(OdinMessageStream::from_response(response))
+        })
     }
 }
 
 #[derive(Debug)]
 pub struct OdinMessageStream {
-    _phantom: std::marker::PhantomData<()>,
+    events: VecDeque<StreamEvent>,
+    done: bool,
+}
+
+impl OdinMessageStream {
+    /// Create a stream from a complete MessageResponse, simulating streaming events
+    fn from_response(response: MessageResponse) -> Self {
+        let mut events = VecDeque::new();
+        
+        // MessageStart event
+        events.push_back(StreamEvent::MessageStart(MessageStartEvent {
+            message: MessageResponse {
+                id: response.id.clone(),
+                kind: response.kind.clone(),
+                role: response.role.clone(),
+                content: vec![],
+                model: response.model.clone(),
+                stop_reason: None,
+                stop_sequence: None,
+                usage: Usage::default(),
+                request_id: None,
+            },
+        }));
+        
+        // Emit content blocks
+        for (index, block) in response.content.iter().enumerate() {
+            if let OutputContentBlock::Text { text } = block {
+                let idx = index as u32;
+                // ContentBlockStart
+                events.push_back(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
+                    index: idx,
+                    content_block: OutputContentBlock::Text { text: String::new() },
+                }));
+                
+                // ContentBlockDelta with full text
+                events.push_back(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
+                    index: idx,
+                    delta: ContentBlockDelta::TextDelta { text: text.clone() },
+                }));
+                
+                // ContentBlockStop
+                events.push_back(StreamEvent::ContentBlockStop(ContentBlockStopEvent { index: idx }));
+            }
+        }
+        
+        // MessageDelta with usage and stop reason
+        events.push_back(StreamEvent::MessageDelta(MessageDeltaEvent {
+            delta: MessageDelta {
+                stop_reason: response.stop_reason.clone(),
+                stop_sequence: response.stop_sequence.clone(),
+            },
+            usage: response.usage.clone(),
+        }));
+        
+        // MessageStop
+        events.push_back(StreamEvent::MessageStop(MessageStopEvent {}));
+        
+        Self { events, done: false }
+    }
+    
+    pub fn request_id(&self) -> Option<&str> {
+        None
+    }
+    
+    pub async fn next_event(&mut self) -> Result<Option<StreamEvent>, ApiError> {
+        if self.done {
+            return Ok(None);
+        }
+        
+        if let Some(event) = self.events.pop_front() {
+            if matches!(event, StreamEvent::MessageStop(_)) {
+                self.done = true;
+            }
+            Ok(Some(event))
+        } else {
+            self.done = true;
+            Ok(None)
+        }
+    }
 }

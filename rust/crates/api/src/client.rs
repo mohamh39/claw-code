@@ -144,7 +144,7 @@ impl MessageStream {
     pub async fn next_event(&mut self) -> Result<Option<StreamEvent>, ApiError> {
         match self {
             Self::Anthropic(stream) => stream.next_event().await,
-            Self::Odin(_) => Ok(None), // Streaming not yet implemented for odin
+            Self::Odin(stream) => stream.next_event().await,
             Self::OpenAiCompat(stream) => stream.next_event().await,
         }
     }
